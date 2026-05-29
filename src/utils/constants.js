@@ -5,9 +5,11 @@
 // For production, use current host (assuming deployed on same domain) or hardcoded
 const IS_DEV = import.meta.env.DEV;
 const WS_PROTOCOL = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-export const SIGNALING_URL = IS_DEV 
+
+// Allow overriding via environment variable (crucial for deploying frontend and backend to different platforms)
+export const SIGNALING_URL = import.meta.env.VITE_SIGNALING_URL || (IS_DEV 
   ? `ws://localhost:3001`
-  : `${WS_PROTOCOL}//${window.location.host}`;
+  : `${WS_PROTOCOL}//${window.location.host}`);
 
 export const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
