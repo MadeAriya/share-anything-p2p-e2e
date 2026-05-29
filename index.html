@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>ClipSync - E2EE P2P Transfer</title>
+    <link rel="stylesheet" href="/src/styles/index.css" />
+    <link rel="stylesheet" href="/src/styles/room.css" />
+    <link rel="stylesheet" href="/src/styles/chat.css" />
+    
+    <!-- Meta tags for SEO & PWA -->
+    <meta name="description" content="Secure, cross-device clipboard sync and file transfer directly between browsers using WebRTC." />
+    <meta name="theme-color" content="#0a0f19" />
+    <link rel="manifest" href="/manifest.json" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="brand">
+        <span class="text-gradient">Clip</span>Sync
+      </div>
+      <div id="connection-badge" style="display: none;" class="security-badge">
+        🔒 E2EE Active
+      </div>
+    </header>
+
+    <main id="app">
+      <!-- UI is dynamically injected here by app.js -->
+    </main>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

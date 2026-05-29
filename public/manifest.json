@@ -1,0 +1,16 @@
+{
+  "name": "ClipSync",
+  "short_name": "ClipSync",
+  "description": "Secure, cross-device clipboard sync and file transfer directly between browsers using WebRTC.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0f19",
+  "theme_color": "#0a0f19",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml"
+    }
+  ]
+}
