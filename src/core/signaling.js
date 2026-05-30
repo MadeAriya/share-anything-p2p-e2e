@@ -8,6 +8,19 @@ export class SignalingClient {
     this.reconnectTimeout = null;
     this.roomCode = null;
     this.isHost = false;
+    this.clientId = crypto.randomUUID().slice(0, 8);
+    this.deviceName = this._detectDeviceName();
+  }
+
+  _detectDeviceName() {
+    const ua = navigator.userAgent;
+    if (/Android/i.test(ua)) return 'Android Phone';
+    if (/iPhone/i.test(ua)) return 'iPhone';
+    if (/iPad/i.test(ua)) return 'iPad';
+    if (/Macintosh/i.test(ua)) return 'Mac';
+    if (/Windows/i.test(ua)) return 'Windows PC';
+    if (/Linux/i.test(ua)) return 'Linux PC';
+    return 'Unknown Device';
   }
 
   connect() {
@@ -22,6 +35,12 @@ export class SignalingClient {
       this.ws.onopen = () => {
         console.log('Signaling server connected');
         if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
+        // Register presence for auto-discovery
+        this.send({ 
+          type: 'register_presence', 
+          clientId: this.clientId, 
+          deviceName: this.deviceName 
+        });
         resolve();
       };
 
@@ -42,7 +61,6 @@ export class SignalingClient {
 
       this.ws.onerror = (err) => {
         console.error('Signaling WebSocket error', err);
-        // Let onclose handle reconnection
       };
     });
   }
@@ -52,7 +70,6 @@ export class SignalingClient {
       this.reconnectTimeout = setTimeout(() => {
         console.log('Attempting to reconnect...');
         this.connect().then(() => {
-          // If we had a room, we might need to rejoin or re-create
           if (this.isHost) {
             this.send({ type: 'create_room', code: this.roomCode });
           } else {
@@ -85,6 +102,15 @@ export class SignalingClient {
 
   relay(payload) {
     this.send({ type: 'relay', payload });
+  }
+
+  // --- Auto-Discovery Methods ---
+  requestNearby() {
+    this.send({ type: 'get_nearby' });
+  }
+
+  invitePeer(targetClientId, roomCode) {
+    this.send({ type: 'invite_peer', targetClientId, roomCode });
   }
 
   on(event, callback) {

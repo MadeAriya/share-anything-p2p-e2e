@@ -19,12 +19,12 @@ export class FileTransferManager {
     this.receiveId = null;
     this.receiveMetadata = null;
     this.receiveSize = 0;
-    this.transferCompleteSignaled = false; // Flag: sender said "done"
-    this.storageReady = false; // Flag: IndexedDB is initialized
+    this.transferCompleteSignaled = false;
+    this.storageReady = false;
     
     // Callbacks
-    this.onProgress = null; // (percentage, isReceiving, metadata)
-    this.onComplete = null; // (blob, metadata)
+    this.onProgress = null;
+    this.onComplete = null;
     this.onError = null;
   }
 
@@ -46,37 +46,30 @@ export class FileTransferManager {
       mime: file.type || 'application/octet-stream',
     };
     
-    // Send metadata over control channel
     const encryptedMeta = await this.crypto.encrypt(JSON.stringify(metadata));
     this.webrtc.sendControlMessage(encryptedMeta);
     
-    // Start sending chunks
     this._sendNextChunk();
   }
 
   async _sendNextChunk() {
     if (!this.isSending || !this.sendFile) return;
     
-    // Flow control: strictly wait if buffer is too full
     const maxThreshold = 1024 * 1024; // 1MB strict limit
     
     while (this.sendOffset < this.sendFile.size) {
       if (this.webrtc.getTransferBufferedAmount() > maxThreshold) {
-        // Stop sending, wait for bufferedAmountLow event to resume
-        return;
+        return; // Wait for bufferedAmountLow
       }
       
       const slice = this.sendFile.slice(this.sendOffset, this.sendOffset + this.CHUNK_SIZE);
       const buffer = await slice.arrayBuffer();
       
-      // Encrypt chunk
       const encryptedChunk = await this.crypto.encrypt(buffer);
-      
       this.webrtc.sendTransferMessage(encryptedChunk);
       
       this.sendOffset += buffer.byteLength;
       
-      // Progress event
       if (this.onProgress) {
         const percent = Math.min(100, Math.round((this.sendOffset / this.sendFile.size) * 100));
         this.onProgress(percent, false, { name: this.sendFile.name, size: this.sendFile.size });
@@ -89,7 +82,6 @@ export class FileTransferManager {
     }
   }
   
-  // Call this when transfer channel bufferedAmountLow event fires
   handleBufferedAmountLow() {
     if (this.isSending) {
       this._sendNextChunk();
@@ -112,11 +104,37 @@ export class FileTransferManager {
     }
   }
 
+  // --- Resume Sending (respond to peer's resume request) ---
+
+  async handleResumeRequest(fileId, lastChunkIndex) {
+    if (!this.sendFile || this.sendId !== fileId) {
+      console.warn('Resume request for unknown file:', fileId);
+      return;
+    }
+
+    // Calculate byte offset from chunk index
+    const resumeFromByte = lastChunkIndex * this.CHUNK_SIZE;
+    this.sendOffset = resumeFromByte;
+    this.isSending = true;
+
+    // Send resume acknowledgement
+    const ack = {
+      type: 'resume_ack',
+      fileId,
+      resumeFromChunk: lastChunkIndex
+    };
+    const encryptedAck = await this.crypto.encrypt(JSON.stringify(ack));
+    this.webrtc.sendControlMessage(encryptedAck);
+
+    console.log(`Resuming send from chunk ${lastChunkIndex} (byte ${resumeFromByte})`);
+    this._sendNextChunk();
+  }
+
   // --- RECEIVING ---
 
   async handleControlMessage(parsedMeta) {
     if (parsedMeta.type === 'file_start') {
-      // Sanitize filename to prevent path traversal
+      // Sanitize filename
       let sanitizedName = parsedMeta.name.replace(/^.*[\\\/]/, '').replace(/[^a-zA-Z0-9.\-_ ()]/g, '');
       if (!sanitizedName) sanitizedName = 'unnamed_file';
       
@@ -126,10 +144,16 @@ export class FileTransferManager {
       this.transferCompleteSignaled = false;
       this.storageReady = false;
       
-      // Initialize IndexedDB and clear stale data BEFORE accepting chunks
       try {
         await this.storage.init();
         await this.storage.clear();
+        // Save transfer state for potential resume
+        await this.storage.saveTransferState(parsedMeta.id, {
+          name: sanitizedName,
+          size: parsedMeta.size,
+          mime: parsedMeta.mime,
+          status: 'receiving'
+        });
         this.storageReady = true;
       } catch (e) {
         console.error("Failed to init IndexedDB:", e);
@@ -142,16 +166,18 @@ export class FileTransferManager {
     } else if (parsedMeta.type === 'file_complete') {
       if (parsedMeta.id === this.receiveId) {
         this.transferCompleteSignaled = true;
-        // Only assemble if ALL bytes have been received
         this._tryAssemble();
       }
+
+    } else if (parsedMeta.type === 'resume_ack') {
+      // Sender acknowledged our resume request — chunks will start flowing again
+      console.log(`Resume acknowledged, receiving from chunk ${parsedMeta.resumeFromChunk}`);
     }
   }
 
   async handleTransferMessage(encryptedChunkBuffer) {
-    if (!this.receiveId) return; // Not expecting a file
+    if (!this.receiveId) return;
     
-    // Wait for storage to be ready if it hasn't finished initializing yet
     if (!this.storageReady) {
       try {
         await this.storage.init();
@@ -172,7 +198,6 @@ export class FileTransferManager {
         this.onProgress(percent, true, this.receiveMetadata);
       }
 
-      // If the sender already signaled "complete" and we now have all bytes, assemble
       if (this.transferCompleteSignaled) {
         this._tryAssemble();
       }
@@ -183,7 +208,6 @@ export class FileTransferManager {
   }
 
   _tryAssemble() {
-    // Only assemble when we have received ALL expected bytes
     if (!this.transferCompleteSignaled) return;
     if (!this.receiveMetadata) return;
     if (this.receiveSize < this.receiveMetadata.size) return;
@@ -194,6 +218,8 @@ export class FileTransferManager {
   async _assembleFile() {
     try {
       const blob = await this.storage.assembleBlob(this.receiveMetadata.mime);
+      // Clear transfer state on successful assembly
+      await this.storage.clearTransferState(this.receiveId);
       if (this.onComplete) {
         this.onComplete(blob, this.receiveMetadata);
       }
@@ -206,5 +232,34 @@ export class FileTransferManager {
       this.transferCompleteSignaled = false;
       this.storageReady = false;
     }
+  }
+
+  // --- Resume Request (called when reconnecting as receiver) ---
+
+  async checkForIncompleteTransfer() {
+    try {
+      await this.storage.init();
+      const state = await this.storage.getIncompleteTransfer();
+      if (state && state.status === 'receiving') {
+        const chunkCount = await this.storage.getChunkCount();
+        if (chunkCount > 0) {
+          return { fileId: state.fileId, lastChunkIndex: chunkCount, metadata: state };
+        }
+      }
+    } catch (e) {
+      console.error("Error checking incomplete transfer:", e);
+    }
+    return null;
+  }
+
+  async sendResumeRequest(fileId, lastChunkIndex) {
+    const msg = {
+      type: 'resume_request',
+      fileId,
+      lastChunkIndex
+    };
+    const encrypted = await this.crypto.encrypt(JSON.stringify(msg));
+    this.webrtc.sendControlMessage(encrypted);
+    console.log(`Sent resume request for file ${fileId} from chunk ${lastChunkIndex}`);
   }
 }

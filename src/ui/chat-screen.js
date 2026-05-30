@@ -8,7 +8,6 @@ export class ChatScreen {
     this.element = document.createElement('div');
     this.element.className = 'screen chat-screen';
     this.render();
-    this.setupDragAndDrop();
   }
 
   render() {
@@ -138,44 +137,6 @@ export class ChatScreen {
         this.addMessageToHistory(text, 'sent');
       }
     }
-  }
-
-  setupDragAndDrop() {
-    const preventDefaults = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-    };
-
-    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-      document.body.addEventListener(eventName, preventDefaults, false);
-    });
-
-    let dragCounter = 0;
-
-    document.body.addEventListener('dragenter', (e) => {
-      if (!this.element.classList.contains('active')) return;
-      dragCounter++;
-      document.body.classList.add('drag-over');
-    }, false);
-
-    document.body.addEventListener('dragleave', (e) => {
-      if (!this.element.classList.contains('active')) return;
-      dragCounter--;
-      if (dragCounter === 0) {
-        document.body.classList.remove('drag-over');
-      }
-    }, false);
-
-    document.body.addEventListener('drop', (e) => {
-      if (!this.element.classList.contains('active')) return;
-      dragCounter = 0;
-      document.body.classList.remove('drag-over');
-      
-      const files = e.dataTransfer.files;
-      if (files.length > 0) {
-        this.app.sendFile(files[0]);
-      }
-    }, false);
   }
 
   addMessageToHistory(text, type = 'received') {

@@ -5,17 +5,15 @@ export class IndexedDBStorage {
     this.dbName = dbName;
     this.db = null;
     this.chunkIndex = 0;
-    this._initPromise = null; // Singleton init to prevent race conditions
+    this._initPromise = null;
   }
 
   async init() {
-    // If already initialized, return immediately
     if (this.db) return;
-    // If init is in progress, wait for it (prevents parallel init calls)
     if (this._initPromise) return this._initPromise;
 
     this._initPromise = new Promise((resolve, reject) => {
-      const request = indexedDB.open(this.dbName, 3);
+      const request = indexedDB.open(this.dbName, 4);
 
       request.onerror = (event) => {
         console.error("IndexedDB error:", event.target.error);
@@ -34,6 +32,11 @@ export class IndexedDBStorage {
           db.deleteObjectStore('chunks');
         }
         db.createObjectStore('chunks', { keyPath: 'seq' });
+
+        // Transfer state store for resume functionality
+        if (!db.objectStoreNames.contains('transfer_state')) {
+          db.createObjectStore('transfer_state', { keyPath: 'fileId' });
+        }
       };
     });
 
@@ -68,6 +71,18 @@ export class IndexedDBStorage {
     });
   }
 
+  async getChunkCount() {
+    if (!this.db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db.transaction(['chunks'], 'readonly');
+      const store = transaction.objectStore('chunks');
+      const request = store.count();
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = (e) => reject(e.target.error);
+    });
+  }
+
   async assembleBlob(mimeType) {
     if (!this.db) await this.init();
 
@@ -78,12 +93,10 @@ export class IndexedDBStorage {
 
       request.onsuccess = (event) => {
         const results = event.target.result;
-        // Sort by sequence number to guarantee correct byte order
         results.sort((a, b) => a.seq - b.seq);
         const buffers = results.map(item => item.data);
         const blob = new Blob(buffers, { type: mimeType });
 
-        // Clear after assembly in a separate transaction
         const clearTx = this.db.transaction(['chunks'], 'readwrite');
         clearTx.objectStore('chunks').clear();
         clearTx.oncomplete = () => {
@@ -92,11 +105,69 @@ export class IndexedDBStorage {
         };
         clearTx.onerror = () => {
           this.chunkIndex = 0;
-          resolve(blob); // still return blob even if clear fails
+          resolve(blob);
         };
       };
 
       request.onerror = (e) => reject(e.target.error);
+    });
+  }
+
+  // --- Transfer State Persistence for Resume ---
+
+  async saveTransferState(fileId, metadata) {
+    if (!this.db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const tx = this.db.transaction(['transfer_state'], 'readwrite');
+      const store = tx.objectStore('transfer_state');
+      store.put({ fileId, ...metadata, updatedAt: Date.now() });
+      tx.oncomplete = () => resolve();
+      tx.onerror = (e) => reject(e.target.error);
+    });
+  }
+
+  async getTransferState(fileId) {
+    if (!this.db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const tx = this.db.transaction(['transfer_state'], 'readonly');
+      const store = tx.objectStore('transfer_state');
+      const request = store.get(fileId);
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = (e) => reject(e.target.error);
+    });
+  }
+
+  async getIncompleteTransfer() {
+    if (!this.db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const tx = this.db.transaction(['transfer_state'], 'readonly');
+      const store = tx.objectStore('transfer_state');
+      const request = store.getAll();
+      request.onsuccess = () => {
+        const results = request.result;
+        // Return the most recent incomplete transfer, if any
+        resolve(results.length > 0 ? results[results.length - 1] : null);
+      };
+      request.onerror = (e) => reject(e.target.error);
+    });
+  }
+
+  async clearTransferState(fileId) {
+    if (!this.db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const tx = this.db.transaction(['transfer_state'], 'readwrite');
+      const store = tx.objectStore('transfer_state');
+      if (fileId) {
+        store.delete(fileId);
+      } else {
+        store.clear();
+      }
+      tx.oncomplete = () => resolve();
+      tx.onerror = (e) => reject(e.target.error);
     });
   }
 }

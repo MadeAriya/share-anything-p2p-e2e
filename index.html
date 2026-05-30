@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="/src/styles/index.css" />
     <link rel="stylesheet" href="/src/styles/room.css" />
     <link rel="stylesheet" href="/src/styles/chat.css" />
+    <link rel="stylesheet" href="/src/styles/settings.css" />
     
     <!-- Meta tags for SEO & PWA -->
     <meta name="description" content="Secure, cross-device clipboard sync and file transfer directly between browsers using WebRTC." />
@@ -18,8 +19,13 @@
       <div class="brand">
         <span class="text-gradient">Clip</span>Sync
       </div>
-      <div id="connection-badge" style="display: none;" class="security-badge">
-        🔒 E2EE Active
+      <div class="header-right" style="display: flex; align-items: center; gap: 1rem;">
+        <div id="connection-badge" style="display: none;" class="security-badge">
+          🔒 E2EE Active
+        </div>
+        <button id="btn-settings" class="btn" style="padding: 0.5rem; border-radius: 50%; width: 40px; height: 40px;" title="Settings">
+          ⚙️
+        </button>
       </div>
     </header>
 

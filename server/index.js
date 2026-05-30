@@ -5,9 +5,7 @@ import http from 'http';
 
 const PORT = process.env.PORT || 3001;
 
-// Create HTTP server (required for some platforms like Render/Koyeb)
 const server = http.createServer((req, res) => {
-  // Simple health check endpoint
   if (req.url === '/health' || req.url === '/') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', service: 'ClipSync Signaling Server' }));
@@ -23,7 +21,9 @@ wss.on('connection', (ws, req) => {
   console.log('New client connected');
   let currentRoom = null;
 
-  // Setup ping-pong to detect stale connections
+  // Extract client IP once at connection time
+  const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+
   ws.isAlive = true;
   ws.on('pong', () => { ws.isAlive = true; });
 
@@ -37,11 +37,10 @@ wss.on('connection', (ws, req) => {
           if (!code || typeof code !== 'string') {
             return sendTo(ws, { type: 'error', message: 'Invalid room code' });
           }
-          
           const created = roomManager.createRoom(code);
           if (created) {
             currentRoom = code;
-            roomManager.joinRoom(code, ws); // Auto join as creator
+            roomManager.joinRoom(code, ws);
             sendTo(ws, { type: 'room_created', code });
             console.log(`Room created: ${code}`);
           } else {
@@ -55,18 +54,13 @@ wss.on('connection', (ws, req) => {
           if (!code || typeof code !== 'string') {
             return sendTo(ws, { type: 'error', message: 'Invalid room code' });
           }
-          
           const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
           const result = roomManager.joinRoom(code, ws, ip);
           if (result.success) {
             currentRoom = code;
             console.log(`Client joined room: ${code}`);
-            
-            // Notify the other peer
             const others = roomManager.getOtherClients(code, ws);
             others.forEach(client => sendTo(client, { type: 'peer_joined' }));
-            
-            // Also notify the joining client if someone is already there
             if (others.length > 0) {
               sendTo(ws, { type: 'peer_joined' });
             }
@@ -77,17 +71,77 @@ wss.on('connection', (ws, req) => {
         }
         
         case 'relay': {
-          // Blind relay: Forward payload to other clients in the room
-          // The server does not inspect the payload content (SDP, ICE, PubKeys)
           if (!currentRoom) {
             return sendTo(ws, { type: 'error', message: 'Not in a room' });
           }
-          
           const others = roomManager.getOtherClients(currentRoom, ws);
           others.forEach(client => sendTo(client, { 
             type: 'relay', 
             payload: msg.payload 
           }));
+          break;
+        }
+
+        // ── Presence / Auto-Discovery messages ──────────────────────
+
+        case 'register_presence': {
+          const { clientId, deviceName } = msg;
+          if (!clientId || typeof clientId !== 'string') {
+            return sendTo(ws, { type: 'error', message: 'Invalid clientId' });
+          }
+          if (!deviceName || typeof deviceName !== 'string') {
+            return sendTo(ws, { type: 'error', message: 'Invalid deviceName' });
+          }
+
+          roomManager.registerPresence(clientIp, ws, clientId, deviceName);
+          console.log(`Presence registered: ${deviceName} (${clientId}) on IP ${clientIp}`);
+
+          // Broadcast updated nearby list to every client on this IP
+          broadcastNearbyUpdate(clientIp);
+          break;
+        }
+
+        case 'get_nearby': {
+          const devices = roomManager.getNearbyDevices(clientIp, ws);
+          sendTo(ws, { type: 'nearby_list', devices });
+          break;
+        }
+
+        case 'invite_peer': {
+          const { targetClientId, roomCode } = msg;
+          if (!targetClientId || !roomCode) {
+            return sendTo(ws, { type: 'error', message: 'Missing targetClientId or roomCode' });
+          }
+
+          // Look up the sender's info so we can include fromClientId / fromDeviceName
+          const senderInfo = roomManager.findPresenceByClientId(msg.fromClientId || '');
+          // Also try to find by ws directly
+          let fromClientId = null;
+          let fromDeviceName = null;
+          // Search all presence entries for this ws
+          for (const [, group] of roomManager.presenceMap.entries()) {
+            for (const entry of group) {
+              if (entry.ws === ws) {
+                fromClientId = entry.clientId;
+                fromDeviceName = entry.deviceName;
+                break;
+              }
+            }
+            if (fromClientId) break;
+          }
+
+          const target = roomManager.findPresenceByClientId(targetClientId);
+          if (!target) {
+            return sendTo(ws, { type: 'error', message: 'Target device not found' });
+          }
+
+          sendTo(target.ws, {
+            type: 'invite_received',
+            fromClientId,
+            fromDeviceName,
+            roomCode
+          });
+          console.log(`Invite sent from ${fromClientId} to ${targetClientId} for room ${roomCode}`);
           break;
         }
         
@@ -111,19 +165,34 @@ wss.on('connection', (ws, req) => {
   });
 
   function handleDisconnect(disconnectedWs) {
+    // Clean up room membership
     const { removedFromCode } = roomManager.removeClient(disconnectedWs);
-    
     if (removedFromCode) {
-      // Notify remaining peer that they are alone now
       const others = roomManager.getOtherClients(removedFromCode, disconnectedWs);
       others.forEach(client => sendTo(client, { type: 'peer_left' }));
+    }
+
+    // Clean up presence and notify remaining same-IP clients
+    const presenceIp = roomManager.removePresence(disconnectedWs);
+    if (presenceIp) {
+      broadcastNearbyUpdate(presenceIp);
     }
   }
 });
 
-// Helper to send messages safely
+/**
+ * Broadcast an updated nearby_list to every client registered under the given IP.
+ */
+function broadcastNearbyUpdate(ip) {
+  const allWs = roomManager.getPresenceWsByIp(ip);
+  for (const clientWs of allWs) {
+    const devices = roomManager.getNearbyDevices(ip, clientWs);
+    sendTo(clientWs, { type: 'nearby_update', devices });
+  }
+}
+
 function sendTo(ws, data) {
-  if (ws.readyState === 1 /* OPEN */) {
+  if (ws.readyState === 1) {
     try {
       ws.send(JSON.stringify(data));
     } catch (e) {
@@ -132,7 +201,6 @@ function sendTo(ws, data) {
   }
 }
 
-// Heartbeat interval to clean up dead connections
 const interval = setInterval(() => {
   wss.clients.forEach((ws) => {
     if (ws.isAlive === false) {
@@ -142,9 +210,13 @@ const interval = setInterval(() => {
         const others = roomManager.getOtherClients(removedFromCode, ws);
         others.forEach(client => sendTo(client, { type: 'peer_left' }));
       }
+      // Also clean up presence for dead connections
+      const presenceIp = roomManager.removePresence(ws);
+      if (presenceIp) {
+        broadcastNearbyUpdate(presenceIp);
+      }
       return ws.terminate();
     }
-    
     ws.isAlive = false;
     ws.ping();
   });
