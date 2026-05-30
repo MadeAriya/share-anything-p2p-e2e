@@ -70,7 +70,7 @@ Your data stays between the devices you connect.
 
 ### Home Screen
 
-![Home]([docs/screenshots/home.png](https://ibb.co.com/TxjtCP49))
+![Home]((https://ibb.co.com/TxjtCP49))
 
 ### Clipboard Sync
 
