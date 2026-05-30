@@ -70,7 +70,7 @@ Your data stays between the devices you connect.
 
 ### Home Screen
 
-![Home](docs/screenshots/home.png)
+![Home]([docs/screenshots/home.png](https://ibb.co.com/TxjtCP49))
 
 ### Clipboard Sync
 
@@ -90,7 +90,7 @@ Your data stays between the devices you connect.
 
 Try ClipSync online:
 
-**https://your-demo-url.com**
+**https://shareanythingiwant.vercel.app**
 
 ---
 
