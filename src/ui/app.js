@@ -9,7 +9,7 @@ import { FileTransferManager } from '../core/file-transfer.js';
 import { HistoryManager } from '../core/history.js';
 import { SignalingClient } from '../core/signaling.js';
 import { SIGNALING_URL } from '../utils/constants.js';
-import { generateRoomCode } from '../utils/helpers.js';
+import { generateRoomCode, inferMimeType } from '../utils/helpers.js';
 import { toast } from './toast.js';
 
 export class App {
@@ -165,7 +165,7 @@ export class App {
           this.pendingShares.push({
             type: 'file',
             name: file.name,
-            mime: file.type || 'application/octet-stream',
+            mime: inferMimeType(file.name, file.type),
             size: file.size,
             data: buffer,
             timestamp: Date.now()

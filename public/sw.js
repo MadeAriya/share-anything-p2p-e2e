@@ -80,7 +80,7 @@ async function handleShareTarget(request) {
       store.add({
         type: 'file',
         name: sharedFile.name,
-        mime: sharedFile.type || 'application/octet-stream',
+        mime: inferMimeType(sharedFile.name, sharedFile.type),
         size: sharedFile.size,
         data: buffer,
         timestamp: Date.now()
@@ -120,3 +120,45 @@ function openShareDB() {
     request.onerror = (event) => reject(event.target.error);
   });
 }
+
+function inferMimeType(filename, currentMime) {
+  if (currentMime && currentMime !== 'application/octet-stream' && currentMime !== '') {
+    return currentMime;
+  }
+  
+  const extMatch = filename.match(/\.([^.]+)$/);
+  if (!extMatch) return currentMime || 'application/octet-stream';
+  
+  const ext = extMatch[1].toLowerCase();
+  
+  const mimeTypes = {
+    'pdf': 'application/pdf',
+    'doc': 'application/msword',
+    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'xls': 'application/vnd.ms-excel',
+    'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'ppt': 'application/vnd.ms-powerpoint',
+    'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+    'png': 'image/png',
+    'gif': 'image/gif',
+    'webp': 'image/webp',
+    'svg': 'image/svg+xml',
+    'mp3': 'audio/mpeg',
+    'wav': 'audio/wav',
+    'm4a': 'audio/mp4',
+    'mp4': 'video/mp4',
+    'webm': 'video/webm',
+    'mov': 'video/quicktime',
+    'zip': 'application/zip',
+    'rar': 'application/x-rar-compressed',
+    'txt': 'text/plain',
+    'csv': 'text/csv',
+    'json': 'application/json',
+    'apk': 'application/vnd.android.package-archive'
+  };
+  
+  return mimeTypes[ext] || currentMime || 'application/octet-stream';
+}
+

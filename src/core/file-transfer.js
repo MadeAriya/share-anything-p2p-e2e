@@ -1,6 +1,7 @@
 // src/core/file-transfer.js
 
 import { IndexedDBStorage } from './storage.js';
+import { inferMimeType } from '../utils/helpers.js';
 
 export class FileTransferManager {
   constructor(webrtcManager, cryptoManager) {
@@ -12,6 +13,7 @@ export class FileTransferManager {
     // Send state
     this.sendFile = null;
     this.sendOffset = 0;
+
     this.sendId = null;
     this.isSending = false;
     
@@ -43,7 +45,7 @@ export class FileTransferManager {
       id: this.sendId,
       name: file.name,
       size: file.size,
-      mime: file.type || 'application/octet-stream',
+      mime: inferMimeType(file.name, file.type),
     };
     
     const encryptedMeta = await this.crypto.encrypt(JSON.stringify(metadata));
