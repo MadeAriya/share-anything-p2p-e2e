@@ -72,10 +72,14 @@ export class App {
 
       this.discoverySignaling.on('invite_received', (msg) => {
         toast.info(`${msg.fromDeviceName} wants to connect!`);
-        // Auto-accept: join the room
-        this.discoverySignaling.disconnect();
-        this.discoverySignaling = null;
-        this.joinRoom(msg.roomCode);
+        // Auto-accept: Wait 500ms for Host to create room, then join
+        setTimeout(() => {
+          if (this.discoverySignaling) {
+            this.discoverySignaling.disconnect();
+            this.discoverySignaling = null;
+          }
+          this.joinRoom(msg.roomCode);
+        }, 500);
       });
 
       // Request nearby devices
@@ -291,7 +295,10 @@ export class App {
       this.crypto.exportPublicKey().then(pubkey => {
         this.webrtc.sendPubkey(pubkey);
       });
-    } else if (state === 'disconnected' || state === 'failed') {
+    } else if (state === 'failed') {
+      toast.error("Peer connection failed.");
+      this.disconnect();
+    } else if (state === 'peer_left') {
       toast.error("Peer disconnected.");
       this.disconnect();
     }
@@ -303,7 +310,10 @@ export class App {
     if (this.discoverySignaling) {
       this.discoverySignaling.invitePeer(device.clientId, code);
     }
-    this.createRoom(code);
+    // Give it a tiny delay to ensure the invite_peer message is flushed before closing socket
+    setTimeout(() => {
+      this.createRoom(code);
+    }, 150);
   }
 
   createRoom(code) {

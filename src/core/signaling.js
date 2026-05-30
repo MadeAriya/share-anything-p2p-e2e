@@ -47,6 +47,10 @@ export class SignalingClient {
       this.ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
+          if (msg.type === 'ping') {
+            this.send({ type: 'pong' });
+            return;
+          }
           this.emit(msg.type, msg);
         } catch (e) {
           console.error('Failed to parse signaling message', e);

@@ -24,6 +24,12 @@ export class WebRTCManager {
 
     this.signaling.on('peer_joined', () => {
       console.log('Peer joined! isHost:', isHost);
+      // If WebRTC is already active, peer temporarily lost signaling and reconnected. Don't reset.
+      if (this.pc && (this.pc.connectionState === 'connected' || this.pc.connectionState === 'connecting')) {
+        console.warn('Ignoring peer_joined because WebRTC is already active.');
+        return;
+      }
+
       if (isHost) {
         // Host initiates the connection when peer joins
         this.createPeerConnection();
@@ -40,9 +46,16 @@ export class WebRTCManager {
     
     this.signaling.on('peer_left', () => {
       console.log('Peer left');
+      
+      // If WebRTC is active, a signaling drop (like mobile backgrounding) shouldn't kill P2P immediately.
+      if (this.pc && (this.pc.connectionState === 'connected' || this.pc.connectionState === 'connecting')) {
+        console.warn('Ignoring peer_left because WebRTC is active. Trusting WebRTC state instead.');
+        return;
+      }
+
       this.close();
       if (this.onConnectionStateChange) {
-        this.onConnectionStateChange('disconnected');
+        this.onConnectionStateChange('peer_left');
       }
     });
 

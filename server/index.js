@@ -32,6 +32,10 @@ wss.on('connection', (ws, req) => {
       const msg = JSON.parse(messageAsString);
       
       switch (msg.type) {
+        case 'pong': {
+          ws.isAlive = true;
+          break;
+        }
         case 'create_room': {
           const { code } = msg;
           if (!code || typeof code !== 'string') {
@@ -218,7 +222,7 @@ const interval = setInterval(() => {
       return ws.terminate();
     }
     ws.isAlive = false;
-    ws.ping();
+    sendTo(ws, { type: 'ping' });
   });
 }, 30000);
 
