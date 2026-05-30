@@ -4,18 +4,22 @@ export class IndexedDBStorage {
   constructor(dbName = 'clipsync_db') {
     this.dbName = dbName;
     this.db = null;
-    this.chunkIndex = 0; // Track insertion order explicitly
+    this.chunkIndex = 0;
+    this._initPromise = null; // Singleton init to prevent race conditions
   }
 
   async init() {
-    // Reset chunk counter for each new file transfer
-    this.chunkIndex = 0;
+    // If already initialized, return immediately
+    if (this.db) return;
+    // If init is in progress, wait for it (prevents parallel init calls)
+    if (this._initPromise) return this._initPromise;
 
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open(this.dbName, 2);
+    this._initPromise = new Promise((resolve, reject) => {
+      const request = indexedDB.open(this.dbName, 3);
 
       request.onerror = (event) => {
         console.error("IndexedDB error:", event.target.error);
+        this._initPromise = null;
         reject(event.target.error);
       };
 
@@ -26,13 +30,26 @@ export class IndexedDBStorage {
 
       request.onupgradeneeded = (event) => {
         const db = event.target.result;
-        // Delete old store if exists (schema upgrade)
         if (db.objectStoreNames.contains('chunks')) {
           db.deleteObjectStore('chunks');
         }
-        // Create store with explicit sequential key for ordering
         db.createObjectStore('chunks', { keyPath: 'seq' });
       };
+    });
+
+    return this._initPromise;
+  }
+
+  async clear() {
+    if (!this.db) await this.init();
+    this.chunkIndex = 0;
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db.transaction(['chunks'], 'readwrite');
+      const store = transaction.objectStore('chunks');
+      const request = store.clear();
+      request.onsuccess = () => resolve();
+      request.onerror = (e) => reject(e.target.error);
     });
   }
 
@@ -44,7 +61,6 @@ export class IndexedDBStorage {
     return new Promise((resolve, reject) => {
       const transaction = this.db.transaction(['chunks'], 'readwrite');
       const store = transaction.objectStore('chunks');
-      // Store with explicit sequence number to guarantee retrieval order
       const request = store.add({ seq, data: chunkBuffer });
 
       request.onsuccess = () => resolve();
@@ -52,34 +68,31 @@ export class IndexedDBStorage {
     });
   }
 
-  async getAllChunksAndClear() {
+  async assembleBlob(mimeType) {
     if (!this.db) await this.init();
 
     return new Promise((resolve, reject) => {
-      // First transaction: read all chunks in key order (sorted by 'seq')
-      const readTx = this.db.transaction(['chunks'], 'readonly');
-      const readStore = readTx.objectStore('chunks');
-      const request = readStore.getAll();
+      const transaction = this.db.transaction(['chunks'], 'readonly');
+      const store = transaction.objectStore('chunks');
+      const request = store.getAll();
 
       request.onsuccess = (event) => {
-        // Sort by sequence number to guarantee correct order
         const results = event.target.result;
+        // Sort by sequence number to guarantee correct byte order
         results.sort((a, b) => a.seq - b.seq);
-        const chunks = results.map(item => item.data);
+        const buffers = results.map(item => item.data);
+        const blob = new Blob(buffers, { type: mimeType });
 
-        // Second transaction: clear the store after successful read
+        // Clear after assembly in a separate transaction
         const clearTx = this.db.transaction(['chunks'], 'readwrite');
-        const clearStore = clearTx.objectStore('chunks');
-        clearStore.clear();
-
+        clearTx.objectStore('chunks').clear();
         clearTx.oncomplete = () => {
           this.chunkIndex = 0;
-          resolve(chunks);
+          resolve(blob);
         };
         clearTx.onerror = () => {
-          // Even if clear fails, still return chunks so user gets their file
           this.chunkIndex = 0;
-          resolve(chunks);
+          resolve(blob); // still return blob even if clear fails
         };
       };
 

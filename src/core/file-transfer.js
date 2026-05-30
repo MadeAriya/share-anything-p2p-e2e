@@ -19,6 +19,8 @@ export class FileTransferManager {
     this.receiveId = null;
     this.receiveMetadata = null;
     this.receiveSize = 0;
+    this.transferCompleteSignaled = false; // Flag: sender said "done"
+    this.storageReady = false; // Flag: IndexedDB is initialized
     
     // Callbacks
     this.onProgress = null; // (percentage, isReceiving, metadata)
@@ -35,8 +37,6 @@ export class FileTransferManager {
     this.sendFile = file;
     this.sendOffset = 0;
     this.sendId = crypto.randomUUID();
-    
-    // Generate a quick ID, no need for real SHA-256 in MVP
     
     const metadata = {
       type: 'file_start',
@@ -116,20 +116,21 @@ export class FileTransferManager {
 
   async handleControlMessage(parsedMeta) {
     if (parsedMeta.type === 'file_start') {
-      // 2. Pencegahan Path Traversal dan Eksekusi Nama File Berbahaya
+      // Sanitize filename to prevent path traversal
       let sanitizedName = parsedMeta.name.replace(/^.*[\\\/]/, '').replace(/[^a-zA-Z0-9.\-_ ()]/g, '');
       if (!sanitizedName) sanitizedName = 'unnamed_file';
       
       this.receiveId = parsedMeta.id;
       this.receiveMetadata = { ...parsedMeta, name: sanitizedName };
       this.receiveSize = 0;
+      this.transferCompleteSignaled = false;
+      this.storageReady = false;
       
-      // Initialize IndexedDB and clear any leftover data from a previous transfer
+      // Initialize IndexedDB and clear stale data BEFORE accepting chunks
       try {
         await this.storage.init();
-        // Clear any stale chunks from a previously interrupted transfer
-        await this.storage.getAllChunksAndClear();
-        await this.storage.init(); // Re-init to reset sequence counter
+        await this.storage.clear();
+        this.storageReady = true;
       } catch (e) {
         console.error("Failed to init IndexedDB:", e);
       }
@@ -137,15 +138,29 @@ export class FileTransferManager {
       if (this.onProgress) {
         this.onProgress(0, true, this.receiveMetadata);
       }
+      
     } else if (parsedMeta.type === 'file_complete') {
       if (parsedMeta.id === this.receiveId) {
-        this._assembleFile();
+        this.transferCompleteSignaled = true;
+        // Only assemble if ALL bytes have been received
+        this._tryAssemble();
       }
     }
   }
 
   async handleTransferMessage(encryptedChunkBuffer) {
     if (!this.receiveId) return; // Not expecting a file
+    
+    // Wait for storage to be ready if it hasn't finished initializing yet
+    if (!this.storageReady) {
+      try {
+        await this.storage.init();
+        this.storageReady = true;
+      } catch (e) {
+        console.error("Storage not ready, dropping chunk:", e);
+        return;
+      }
+    }
     
     try {
       const decryptedBuffer = await this.crypto.decrypt(encryptedChunkBuffer);
@@ -156,16 +171,29 @@ export class FileTransferManager {
         const percent = Math.min(100, Math.round((this.receiveSize / this.receiveMetadata.size) * 100));
         this.onProgress(percent, true, this.receiveMetadata);
       }
+
+      // If the sender already signaled "complete" and we now have all bytes, assemble
+      if (this.transferCompleteSignaled) {
+        this._tryAssemble();
+      }
     } catch (e) {
       console.error("Failed to decrypt incoming file chunk", e);
       if (this.onError) this.onError(e);
     }
   }
 
+  _tryAssemble() {
+    // Only assemble when we have received ALL expected bytes
+    if (!this.transferCompleteSignaled) return;
+    if (!this.receiveMetadata) return;
+    if (this.receiveSize < this.receiveMetadata.size) return;
+    
+    this._assembleFile();
+  }
+
   async _assembleFile() {
     try {
-      const allChunks = await this.storage.getAllChunksAndClear();
-      const blob = new Blob(allChunks, { type: this.receiveMetadata.mime });
+      const blob = await this.storage.assembleBlob(this.receiveMetadata.mime);
       if (this.onComplete) {
         this.onComplete(blob, this.receiveMetadata);
       }
@@ -175,6 +203,8 @@ export class FileTransferManager {
       this.receiveId = null;
       this.receiveMetadata = null;
       this.receiveSize = 0;
+      this.transferCompleteSignaled = false;
+      this.storageReady = false;
     }
   }
 }

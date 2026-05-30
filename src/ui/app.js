@@ -85,7 +85,7 @@ export class App {
         if (parsed.type === 'text') {
           this.screens.chat.addMessageToHistory(parsed.content, 'received');
         } else if (parsed.type === 'file_start' || parsed.type === 'file_complete') {
-          this.fileTransfer.handleControlMessage(parsed);
+          await this.fileTransfer.handleControlMessage(parsed);
         }
       } catch (e) {
         console.error("Failed to decrypt control message:", e);
