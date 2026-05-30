@@ -114,7 +114,7 @@ export class FileTransferManager {
 
   // --- RECEIVING ---
 
-  handleControlMessage(parsedMeta) {
+  async handleControlMessage(parsedMeta) {
     if (parsedMeta.type === 'file_start') {
       // 2. Pencegahan Path Traversal dan Eksekusi Nama File Berbahaya
       let sanitizedName = parsedMeta.name.replace(/^.*[\\\/]/, '').replace(/[^a-zA-Z0-9.\-_ ()]/g, '');
@@ -124,8 +124,15 @@ export class FileTransferManager {
       this.receiveMetadata = { ...parsedMeta, name: sanitizedName };
       this.receiveSize = 0;
       
-      // Initialize IndexedDB
-      this.storage.init().catch(e => console.error("Failed to init IndexedDB:", e));
+      // Initialize IndexedDB and clear any leftover data from a previous transfer
+      try {
+        await this.storage.init();
+        // Clear any stale chunks from a previously interrupted transfer
+        await this.storage.getAllChunksAndClear();
+        await this.storage.init(); // Re-init to reset sequence counter
+      } catch (e) {
+        console.error("Failed to init IndexedDB:", e);
+      }
       
       if (this.onProgress) {
         this.onProgress(0, true, this.receiveMetadata);
