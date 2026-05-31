@@ -1,5 +1,9 @@
 // src/main.js
 import { App } from './ui/app.js';
+import { inject } from '@vercel/analytics';
+
+// Initialize Vercel Analytics
+inject();
 
 document.addEventListener('DOMContentLoaded', () => {
   const app = new App();
