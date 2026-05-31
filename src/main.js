@@ -2,8 +2,11 @@
 import { App } from './ui/app.js';
 import { inject } from '@vercel/analytics';
 
-// Initialize Vercel Analytics
-inject();
+// Initialize Vercel Analytics with environment-aware configuration
+inject({
+  mode: import.meta.env.PROD ? 'production' : 'development',
+  debug: !import.meta.env.PROD // Enable debug mode in development
+});
 
 document.addEventListener('DOMContentLoaded', () => {
   const app = new App();
